@@ -10,7 +10,7 @@ server) and gives it three things its author doesn't have to build:
    never holds customer money.
 2. **A signed receipt for every call** — request/response digests, payment
    binding and a per-session hash chain, verifiable offline by anyone. See
-   [`specs/receipt-spec-v0.1.md`](specs/receipt-spec-v0.1.md).(canonical home: [agent-receipt-spec](https://github.com/crisnovillo1991/agent-receipt-spec))
+   [`specs/receipt-spec-v0.1.md`](specs/receipt-spec-v0.1.md). (canonical home: [agent-receipt-spec](https://github.com/crisnovillo1991/agent-receipt-spec))
 3. **(v0.5) An A2A face** — an auto-generated Agent Card and task-lifecycle
    mapping so A2A-speaking agents can hire the capability.
 
