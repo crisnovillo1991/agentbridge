@@ -1,0 +1,6 @@
+.env
+data/
+__pycache__/
+*.pyc
+capabilities.yaml
+.pytest_cache/

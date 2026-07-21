@@ -1,0 +1,20 @@
+# Copy to capabilities.yaml and edit. Each entry becomes POST /mcp/<id>
+# behind an x402 paywall (price "0" disables the paywall for that entry).
+capabilities:
+  - id: vidainf-prices
+    description: >
+      Structured wholesale pricing for the Argentine phone-parts market
+      (Zona 1 La Plata), refreshed monthly. Query by model/part.
+    upstream_url: http://host.docker.internal:9100/mcp   # your scraper, MCP Streamable HTTP
+    upstream_api_key: null
+    price: "1000"            # atomic units → 0.001 USDC (6 decimals)
+    network: base-sepolia    # move to "base" for mainnet
+    asset: USDC
+    pay_to: "0xYOUR_WALLET_HERE"
+    provider_id: "area51celulares"
+
+  - id: echo-free
+    description: Free smoke-test capability (no paywall).
+    upstream_url: http://host.docker.internal:9100/mcp
+    price: "0"
+    pay_to: ""
