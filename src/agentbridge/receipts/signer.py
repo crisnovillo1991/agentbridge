@@ -22,9 +22,13 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def receipt_hash(full_receipt: dict) -> str:
-    """Hash of the COMPLETE receipt incl. signatures — used for chaining."""
-    return sha256_hex(canonical_json(full_receipt))
+def receipt_hash(full_entry: dict) -> str:
+    """Hash of the COMPLETE entry incl. signatures — used for chaining and
+    attaches_to references (spec §5 'entry hash')."""
+    return sha256_hex(canonical_json(full_entry))
+
+
+entry_hash = receipt_hash  # spec v0.2 name
 
 
 class BridgeSigner:
@@ -72,8 +76,9 @@ def verify_receipt_signatures(receipt: dict) -> bool:
 
 def verify_chain_link(receipt: dict, prev_receipt: dict) -> bool:
     """Spec §8 step 3."""
+    field = "prev_receipt_hash" if receipt.get("spec_version") == "0.1" else "prev_entry_hash"
     return (
-        receipt.get("prev_receipt_hash") == receipt_hash(prev_receipt)
+        receipt.get(field) == receipt_hash(prev_receipt)
         and receipt.get("seq") == prev_receipt.get("seq", -2) + 1
         and receipt.get("session_id") == prev_receipt.get("session_id")
     )

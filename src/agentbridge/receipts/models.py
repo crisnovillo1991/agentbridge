@@ -9,7 +9,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 SPEC = "agent-interaction-receipt"
-SPEC_VERSION = "0.1"
+SPEC_VERSION = "0.2"
 
 
 class Party(BaseModel):
@@ -37,7 +37,10 @@ class PaymentInfo(BaseModel):
     pay_to: str
     payer: str | None = None
     payment_payload_sha256: str
+    settlement_status: str  # "settled" | "pending" | "failed" as of issuance (§8.3/§8.4)
     settlement_ref: str | None = None
+    settle_response_sha256: str | None = None  # digest of verbatim settle response (§4.3)
+    settle_response_len: int | None = None
 
 
 class Signature(BaseModel):
@@ -49,13 +52,14 @@ class Signature(BaseModel):
 
 
 class ReceiptCore(BaseModel):
-    """Everything that gets signed (spec §6: receipt minus `signatures`)."""
+    """Everything that gets signed (spec §6: entry minus `signatures`)."""
 
     spec: str = SPEC
     spec_version: str = SPEC_VERSION
+    entry_type: str = "receipt"
     session_id: str
     seq: int
-    prev_receipt_hash: str | None
+    prev_entry_hash: str | None
     issued_at: str
     capability_id: str
     parties: list[Party]
@@ -66,4 +70,34 @@ class ReceiptCore(BaseModel):
 
 
 class Receipt(ReceiptCore):
+    signatures: list[Signature]
+
+
+class SettlementInfo(BaseModel):
+    final_status: str  # "settled" | "failed" — never "pending" (§4.6)
+    tx_hash: str | None
+    network: str | None
+    facilitator_id: str
+    response_timestamp: str
+    settle_response_sha256: str
+    settle_response_len: int
+
+
+class SettlementAttachmentCore(BaseModel):
+    """Settlement attachment entry core (spec §4.6): resolves a receipt's
+    pending settlement as a new signed entry in the same chain."""
+
+    spec: str = SPEC
+    spec_version: str = SPEC_VERSION
+    entry_type: str = "settlement-attachment"
+    session_id: str
+    seq: int
+    prev_entry_hash: str | None
+    issued_at: str
+    attaches_to: str  # entry hash of the receipt being resolved
+    settlement: SettlementInfo
+    meta: dict = Field(default_factory=dict)
+
+
+class SettlementAttachment(SettlementAttachmentCore):
     signatures: list[Signature]

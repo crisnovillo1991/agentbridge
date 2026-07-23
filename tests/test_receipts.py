@@ -25,7 +25,7 @@ def make_signer() -> BridgeSigner:
 
 def make_core() -> dict:
     core = ReceiptCore(
-        session_id="", seq=0, prev_receipt_hash=None, issued_at="",
+        session_id="", seq=0, prev_entry_hash=None, issued_at="",
         capability_id="cap-1",
         parties=[Party(role="bridge", id="https://b", key_id="k")],
         request=ExchangeDigest(kind="http-request", method="POST", target="/mcp/cap-1",
@@ -33,7 +33,7 @@ def make_core() -> dict:
         response=ExchangeDigest(kind="http-response", status=200,
                                 body_sha256="b" * 64, body_len=20),
     ).model_dump(mode="json")
-    for k in ("session_id", "seq", "prev_receipt_hash", "issued_at"):
+    for k in ("session_id", "seq", "prev_entry_hash", "issued_at"):
         core.pop(k)
     return core
 
@@ -45,8 +45,8 @@ def test_chain_and_signatures(tmp_path):
     r1, h1 = store.record("s1", make_core(), signer)
     r2, h2 = store.record("s1", make_core(), signer)
 
-    assert r1["seq"] == 0 and r1["prev_receipt_hash"] is None
-    assert r2["seq"] == 1 and r2["prev_receipt_hash"] == h1 == receipt_hash(r1)
+    assert r1["seq"] == 0 and r1["prev_entry_hash"] is None
+    assert r2["seq"] == 1 and r2["prev_entry_hash"] == h1 == receipt_hash(r1)
     assert verify_receipt_signatures(r1) and verify_receipt_signatures(r2)
     assert verify_chain_link(r2, r1)
     assert store.get(h2) == r2
@@ -70,11 +70,49 @@ def test_standalone_verifier_agrees(tmp_path):
     r1, _ = store.record("s1", make_core(), signer)
     r2, _ = store.record("s1", make_core(), signer)
 
-    assert standalone_verifier.verify(r1) == []
-    assert standalone_verifier.verify(r2) == []
-    assert standalone_verifier.receipt_hash(r1) == receipt_hash(r1)
-    assert standalone_verifier.receipt_hash(r1) == r2["prev_receipt_hash"]
+    assert standalone_verifier.verify_entry(r1) == []
+    assert standalone_verifier.verify_entry(r2) == []
+    assert standalone_verifier.entry_hash(r1) == receipt_hash(r1)
+    assert standalone_verifier.entry_hash(r1) == r2["prev_entry_hash"]
 
     bad = json.loads(json.dumps(r1))
     bad["capability_id"] = "evil"
-    assert standalone_verifier.verify(bad) != []
+    assert standalone_verifier.verify_entry(bad) != []
+
+
+def test_attachment_flow_and_2814_case(tmp_path):
+    """Pending receipt -> failed attachment digesting a verbatim 'processing'
+    response (the x402#2814 false-assurance case), chained and pair-verified."""
+    from agentbridge.receipts.attachments import build_attachment_core, derive_x402
+
+    signer = make_signer()
+    store = ReceiptStore(tmp_path)
+
+    core = make_core()
+    core["payment"] = {
+        "protocol": "x402", "scheme": "exact", "network": "base-sepolia",
+        "asset": "USDC", "amount": "1000", "pay_to": "0xP", "payer": "0xA",
+        "payment_payload_sha256": "c" * 64,
+        "settlement_status": "pending", "settlement_ref": None,
+        "settle_response_sha256": None, "settle_response_len": None,
+    }
+    receipt, rhash = store.record("s-2814", core, signer)
+    assert receipt["payment"]["settlement_status"] == "pending"
+
+    raw = b'{"success":true,"transaction":null,"status":"processing","network":"base-sepolia"}'
+    assert derive_x402(raw)[0:2] == ("failed", None)  # §8.4: processing derives failed
+
+    att_core = build_attachment_core(rhash, raw, "https://facilitator.example")
+    attachment, ahash = store.record("s-2814", att_core, signer)
+
+    assert attachment["entry_type"] == "settlement-attachment"
+    assert attachment["attaches_to"] == rhash
+    assert attachment["settlement"]["final_status"] == "failed"
+    assert attachment["settlement"]["tx_hash"] is None
+    assert attachment["seq"] == 1 and attachment["prev_entry_hash"] == rhash
+    assert verify_receipt_signatures(attachment)
+    assert verify_chain_link(attachment, receipt)
+    assert standalone_verifier.verify_entry(attachment) == []
+    assert standalone_verifier.verify_pair(attachment, receipt) == []
+    assert standalone_verifier.verify_settle_disclosure(attachment, raw) == []
+    assert standalone_verifier.verify_settle_disclosure(attachment, raw + b" ") != []

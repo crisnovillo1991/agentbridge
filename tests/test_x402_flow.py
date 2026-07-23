@@ -88,7 +88,11 @@ def test_paid_flow_returns_body_and_verifiable_receipt(client):
     assert receipt["payment"]["amount"] == "1000"
     assert receipt["payment"]["payer"] == "0xPAYER1"
     assert receipt["response"]["body_sha256"] == hashlib.sha256(r.content).hexdigest()
-    assert receipt["seq"] == 0 and receipt["prev_receipt_hash"] is None
+    assert receipt["seq"] == 0 and receipt["prev_entry_hash"] is None
+    assert receipt["entry_type"] == "receipt" and receipt["spec_version"] == "0.2"
+    assert receipt["payment"]["settlement_status"] == "settled"  # mock settles sync per §8.4
+    assert receipt["payment"]["settlement_ref"].startswith("0xmock")
+    assert receipt["payment"]["settle_response_sha256"] is not None
 
 
 def test_session_chain_advances(client):
@@ -98,7 +102,7 @@ def test_session_chain_advances(client):
     rec1 = client.get(f"/receipts/{r1.headers['X-Receipt-Hash']}").json()["receipt"]
     rec2 = client.get(f"/receipts/{r2.headers['X-Receipt-Hash']}").json()["receipt"]
     assert rec1["seq"] == 0 and rec2["seq"] == 1
-    assert rec2["prev_receipt_hash"] == r1.headers["X-Receipt-Hash"]
+    assert rec2["prev_entry_hash"] == r1.headers["X-Receipt-Hash"]
 
 
 def test_unknown_capability_404(client):

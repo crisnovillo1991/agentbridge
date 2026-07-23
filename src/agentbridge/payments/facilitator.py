@@ -60,7 +60,7 @@ class SettleResult(BaseModel):
 
 class Facilitator(Protocol):
     async def verify(self, payment_b64: str, req: PaymentRequirements) -> VerifyResult: ...
-    async def settle(self, payment_b64: str, req: PaymentRequirements) -> SettleResult: ...
+    async def settle(self, payment_b64: str, req: PaymentRequirements) -> tuple[SettleResult, bytes]: ...
 
 
 class MockFacilitator:
@@ -79,9 +79,11 @@ class MockFacilitator:
             return VerifyResult(valid=False, reason="mock facilitator requires {'mock': true}")
         return VerifyResult(valid=True, payer=payload.get("payer", "0xMOCKPAYER"))
 
-    async def settle(self, payment_b64: str, req: PaymentRequirements) -> SettleResult:
+    async def settle(self, payment_b64: str, req: PaymentRequirements) -> tuple[SettleResult, bytes]:
         ref = hashlib.sha256(payment_b64.encode()).hexdigest()[:16]
-        return SettleResult(settled=True, tx_hash=f"0xmock{ref}")
+        raw = json.dumps({"success": True, "transaction": f"0xmock{ref}",
+                          "network": req.network}).encode()
+        return SettleResult(settled=True, tx_hash=f"0xmock{ref}"), raw
 
 
 class HttpFacilitator:
@@ -110,16 +112,17 @@ class HttpFacilitator:
             reason=data.get("invalidReason"),
         )
 
-    async def settle(self, payment_b64: str, req: PaymentRequirements) -> SettleResult:
+    async def settle(self, payment_b64: str, req: PaymentRequirements) -> tuple[SettleResult, bytes]:
         body = {
             "x402Version": 1,
             "paymentPayload": json.loads(base64.b64decode(payment_b64)),
             "paymentRequirements": req.to_wire(),
         }
         r = await self._client.post(f"{self._base}/settle", json=body)
+        raw = r.content  # verbatim bytes: the evidence AIR digests (§4.6)
         data = r.json()
         return SettleResult(
             settled=bool(data.get("success")),
             tx_hash=data.get("transaction"),
             reason=data.get("errorReason"),
-        )
+        ), raw

@@ -39,7 +39,7 @@ class ReceiptStore:
     def record(self, session_id: str, core: dict, signer: BridgeSigner) -> tuple[dict, str]:
         """Assign chain position, sign, persist. Returns (receipt, hash).
 
-        `core` is a ReceiptCore dump MINUS session_id/seq/prev_receipt_hash/
+        `core` is an entry-core dump (receipt or attachment) MINUS session_id/seq/prev_entry_hash/
         issued_at, which are filled here so chain integrity can't be bypassed.
         """
         with self._lock:
@@ -53,7 +53,7 @@ class ReceiptStore:
             core.update(
                 session_id=session_id,
                 seq=seq,
-                prev_receipt_hash=prev_hash,
+                prev_entry_hash=prev_hash,
                 issued_at=now_rfc3339(),
             )
             signature = signer.sign_core(core)
@@ -63,7 +63,7 @@ class ReceiptStore:
             (self._blobs / f"{rhash}.json").write_bytes(canonical_json(receipt))
             self._db.execute(
                 "INSERT INTO receipts (hash, session_id, seq, capability_id, issued_at) VALUES (?,?,?,?,?)",
-                (rhash, session_id, seq, core["capability_id"], core["issued_at"]),
+                (rhash, session_id, seq, core.get("capability_id", core.get("entry_type", "entry")), core["issued_at"]),
             )
             self._db.commit()
         return receipt, rhash

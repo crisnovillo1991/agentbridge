@@ -17,6 +17,7 @@ from .gateway.a2a_adapter import build_agent_card
 from .gateway.proxy import UpstreamClient
 from .payments import x402
 from .payments.facilitator import Facilitator, HttpFacilitator, MockFacilitator
+from .receipts.attachments import derive_x402
 from .receipts.models import ExchangeDigest, Party, PaymentInfo, ReceiptCore
 from .receipts.signer import BridgeSigner, sha256_hex, verify_receipt_signatures
 from .receipts.store import ReceiptStore
@@ -87,8 +88,9 @@ def create_app(
         )
 
         if paid:
-            sr = await facilitator.settle(payment_b64, x402.requirements_for(cap, resource))
+            sr, settle_raw = await facilitator.settle(payment_b64, x402.requirements_for(cap, resource))
             settle_hdr = x402.settlement_header(sr.settled, sr.tx_hash, cap.network, payer)
+            d_status, d_tx, _ = derive_x402(settle_raw)  # §8.4: status is derived, never asserted
             payment_info = PaymentInfo(
                 network=cap.network,
                 asset=cap.asset,
@@ -96,13 +98,16 @@ def create_app(
                 pay_to=cap.pay_to,
                 payer=payer,
                 payment_payload_sha256=sha256_hex(payment_b64.encode()),
-                settlement_ref=sr.tx_hash,
+                settlement_status=d_status,
+                settlement_ref=d_tx,
+                settle_response_sha256=sha256_hex(settle_raw),
+                settle_response_len=len(settle_raw),
             )
 
         core = ReceiptCore(
             session_id="",  # assigned by the store
             seq=0,
-            prev_receipt_hash=None,
+            prev_entry_hash=None,
             issued_at="",
             capability_id=cap.id,
             parties=[
@@ -127,7 +132,7 @@ def create_app(
             ),
             payment=payment_info,
         ).model_dump(mode="json")
-        for k in ("session_id", "seq", "prev_receipt_hash", "issued_at"):
+        for k in ("session_id", "seq", "prev_entry_hash", "issued_at"):
             core.pop(k)
 
         session_id = request.headers.get("x-bridge-session") or f"{cap.id}:{payer or 'anon'}"
