@@ -107,3 +107,26 @@ def test_session_chain_advances(client):
 
 def test_unknown_capability_404(client):
     assert client.post("/mcp/nope", json={}).status_code == 404
+
+
+def test_authorization_binding_in_meta(client):
+    """Experiment issue #4: X-AIR-Authorization lands in meta.authorization,
+    cryptographically bound (tampering it breaks the signature)."""
+    import base64 as b64
+    from agentbridge.receipts.signer import verify_receipt_signatures
+
+    auth = {"scheme": "invinoveritas.verdict_proof.v1",
+            "decision_ref": "sha256:" + "ab" * 32, "policy_version": "v5"}
+    hdrs = {"X-PAYMENT": mock_payment(),
+            "X-AIR-Authorization": b64.b64encode(json.dumps(auth).encode()).decode()}
+    r = client.post("/mcp/echo", json={"q": 1}, headers=hdrs)
+    assert r.status_code == 200
+    receipt = client.get(f"/receipts/{r.headers['X-Receipt-Hash']}").json()["receipt"]
+    assert receipt["meta"]["authorization"] == auth
+    tampered = json.loads(json.dumps(receipt))
+    tampered["meta"]["authorization"]["decision_ref"] = "sha256:" + "cd" * 32
+    assert not verify_receipt_signatures(tampered)
+
+    bad = {"scheme": "x", "decision_ref": "y", "confidence": 0.85}  # float -> 400
+    hdrs["X-AIR-Authorization"] = b64.b64encode(json.dumps(bad).encode()).decode()
+    assert client.post("/mcp/echo", json={}, headers=hdrs).status_code == 400

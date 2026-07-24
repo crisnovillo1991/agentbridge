@@ -7,6 +7,8 @@ Flow per paid call (see specs/receipt-spec-v0.1.md):
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
 
 from fastapi import FastAPI, Request, Response
@@ -18,6 +20,7 @@ from .gateway.proxy import UpstreamClient
 from .payments import x402
 from .payments.facilitator import Facilitator, HttpFacilitator, MockFacilitator
 from .receipts.attachments import derive_x402
+from .receipts.canonical import canonical_json
 from .receipts.models import ExchangeDigest, Party, PaymentInfo, ReceiptCore
 from .receipts.signer import BridgeSigner, sha256_hex, verify_receipt_signatures
 from .receipts.store import ReceiptStore
@@ -70,6 +73,22 @@ def create_app(
 
         body = await request.body()
         resource = str(request.url)
+
+        # Optional pre-action authorization binding (experiment issue #4):
+        # X-AIR-Authorization: base64(JSON) -> signed into meta.authorization.
+        authorization = None
+        auth_hdr = request.headers.get("x-air-authorization")
+        if auth_hdr:
+            try:
+                authorization = json.loads(base64.b64decode(auth_hdr))
+                assert isinstance(authorization, dict)
+                assert isinstance(authorization.get("scheme"), str)
+                assert isinstance(authorization.get("decision_ref"), str)
+                canonical_json(authorization)  # enforce the number rule early (§4)
+            except Exception:
+                return JSONResponse(status_code=400, content={
+                    "error": "X-AIR-Authorization must be base64 JSON object with "
+                             "string 'scheme' and 'decision_ref'; floats forbidden"})
         paid = cap.price != "0"
         payment_b64 = request.headers.get(x402.PAYMENT_HEADER)
         payer, payment_info, settle_hdr = None, None, None
@@ -131,6 +150,7 @@ def create_app(
                 body_len=len(resp_body),
             ),
             payment=payment_info,
+            meta={"authorization": authorization} if authorization else {},
         ).model_dump(mode="json")
         for k in ("session_id", "seq", "prev_entry_hash", "issued_at"):
             core.pop(k)
