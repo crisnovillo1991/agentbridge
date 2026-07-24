@@ -116,3 +116,17 @@ def test_attachment_flow_and_2814_case(tmp_path):
     assert standalone_verifier.verify_pair(attachment, receipt) == []
     assert standalone_verifier.verify_settle_disclosure(attachment, raw) == []
     assert standalone_verifier.verify_settle_disclosure(attachment, raw + b" ") != []
+
+
+def test_derive_x402_survives_hostile_inputs():
+    """Dry-run finding (x402#2922): valid non-object JSON must derive failed,
+    never raise. Plus the conservative behaviors confirmed on real probes."""
+    from agentbridge.receipts.attachments import derive_x402
+
+    hostile = [b'[1,2,3]', b'"ok"', b'null', b'true', b'42', b'', b'not json', b'<html>err</html>']
+    for raw in hostile:
+        status, tx, _ = derive_x402(raw)
+        assert (status, tx) == ("failed", None), raw
+    assert derive_x402(b'{"success":"true","transaction":"0x1"}')[0] == "failed"  # bool estricto
+    assert derive_x402(b'{"success":true,"transaction":""}')[0] == "failed"       # tx vacío no liquida
+    assert derive_x402(b'{"success":true,"transaction":"0xok"}')[0:2] == ("settled", "0xok")

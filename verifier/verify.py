@@ -56,6 +56,8 @@ def derive_x402(raw: bytes) -> tuple[str, str | None, str | None]:
         obj = json.loads(raw.decode("utf-8"))
     except Exception:
         return "failed", None, None
+    if not isinstance(obj, dict):  # bare string/number/bool/null/array: non-conforming
+        return "failed", None, None
     tx = obj.get("transaction")
     net = obj.get("network") if isinstance(obj.get("network"), str) else None
     if obj.get("success") is True and isinstance(tx, str) and tx:

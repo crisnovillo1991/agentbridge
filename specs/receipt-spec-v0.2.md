@@ -197,10 +197,29 @@ v0.3 list (§11).
 
 Within a session, entry `n` MUST carry
 `prev_entry_hash = entry_hash(entry n−1)` and `seq = n`. Receipts and
-settlement attachments interleave freely in one chain. A verifier holding a
-contiguous run of entries can prove no entry in the run was altered, inserted
-or removed — which is precisely what makes "the attachment never existed"
-and "the attachment was swapped" detectable claims rather than assertions.
+settlement attachments interleave freely in one chain.
+
+Chaining provides **no-rewriting**: a verifier holding a contiguous run of
+entries can prove that nothing inside the run was altered, reordered, or
+removed after issuance — any such edit breaks a link. That is what makes
+"the attachment was swapped" a detectable claim rather than an assertion.
+
+Chaining does **not** provide **no-omission**, and cannot in principle: an
+interaction that occurred but was never receipted leaves no gap — the next
+issued entry links to the previous one and the sequence reads as intact.
+Absence of an entry is evidence about the tape, never about the world. The
+same limit applies at a run's end: holding entries up to `seq n` proves
+nothing about whether entries beyond `n` exist, which is why §8.3 scopes its
+rules to attachments "in the holder's possession".
+
+Closing no-omission requires a mechanism outside the chain — out of scope
+for v0.2 and listed for v0.3: a declared issuance cadence (heartbeat
+entries, so silence becomes distinguishable from idleness), or an
+independently enumerable obligation set in which each covered interaction
+obligates exactly one receipt. The x402 profile has a natural candidate:
+settled payments are enumerable on-chain, and §4.3 binds each payment to its
+receipt. Naming this limit is what makes the no-rewriting claim strong.
+
 Anchoring (Merkle root per epoch to a chain and/or RFC 3161) remains out of
 scope for v0.2 (§11).
 
@@ -245,9 +264,10 @@ Given an attachment `A` and a receipt `R`:
    proves what the issuer attested — but the disclosure MUST be flagged as
    inconsistent, which is itself dispute-relevant.
 9. For the x402 profile, the settle-response mapping is:
-   - Parse the verbatim bytes as UTF-8 JSON. If parsing fails, the response
-     is *non-conforming*: `final_status` MUST be `"failed"`, `tx_hash` MUST
-     be `null`.
+   - Parse the verbatim bytes as UTF-8 JSON. If parsing fails, **or the
+     parsed value is not a JSON object** (a bare string, number, boolean,
+     null or array), the response is *non-conforming*: `final_status` MUST
+     be `"failed"`, `tx_hash` MUST be `null`.
    - `final_status = "settled"` **iff** the parsed object has
      `success == true` **and** `transaction` is a non-empty string.
      Otherwise `final_status = "failed"`. (Note: a response claiming
@@ -285,6 +305,10 @@ only check that touches a ledger, and it is optional for format validity.
   an on-chain identity registry (ERC-8004-style), or pin contractually. Key
   rotation SHOULD start a new session.
 - **Timestamps** are issuer claims until anchored (§7).
+- **Non-repudiation, not recomputability.** Content-free digests prove what
+  was recorded and that it is unaltered; a verifier without the underlying
+  bytes cannot re-derive the request or response from the receipt. A
+  deliberate privacy trade — but the two claims must not be conflated.
 - **Privacy:** digests of low-entropy bodies can be brute-forced;
   implementations SHOULD use salted digests for guessable sensitive bodies
   (`meta.body_hash_salted: true`), disclosing the salt only with the body.
@@ -372,6 +396,16 @@ dispatch.
 - Resolves reference-repo issues #1 and #2; design credit to the
   contributors in x402-foundation/x402#2922, grounded in the failure data of
   x402-foundation/x402#2814.
+- §7 rewritten to separate **no-rewriting** (which chaining provides) from
+  **no-omission** (which chaining cannot provide in principle); no-omission
+  mechanisms (issuance cadence, enumerable obligation sets) are scoped to
+  v0.3. §9 adds the non-repudiation-vs-recomputability distinction. Both
+  precisions come from independent review in the ERC-8004 Ethereum
+  Magicians thread.
+- §8.4 non-object-JSON clarification and vector valid/09 come from an
+  independent dry-run of the mapping against 610 archived production
+  facilitator responses (same thread). Evidence formats should be hardened
+  by real failures, not happy-path examples.
 
 **Planned for v0.3:** provider/payer co-signatures; algorithm agility
 (secp256k1, ERC-1271 contract signatures); Merkle anchoring profile;
