@@ -112,7 +112,7 @@ integers (`seq`, `status`, lengths) may use JSON numbers.
 | `payer` | string \| null | yes | Payer address as reported by verification. |
 | `payment_payload_sha256` | string | yes | Hex SHA-256 of the raw payment payload (v1: `X-PAYMENT` header value; v2: `PAYMENT-SIGNATURE`). Binds the receipt to the signed authorization without embedding it. |
 | `settlement_status` | string | yes | `"settled"`, `"pending"` or `"failed"` **as of issuance** (§8.3). |
-| `settlement_ref` | string \| null | yes | Transaction hash if settled at issuance, else `null`. |
+| `settlement_ref` | string \| null | yes | Transaction hash if settled at issuance, else `null`. MUST be `null` when `settlement_status` is `"pending"`. |
 | `settle_response_sha256` | string \| null | no | Hex SHA-256 of the verbatim facilitator settle response bytes, when a settle was attempted at issuance. RECOMMENDED whenever `settlement_status != "pending"`. |
 | `settle_response_len` | integer \| null | no | Length in bytes of that response. |
 
@@ -151,7 +151,7 @@ to the envelope:
 |---|---|---|---|
 | `attaches_to` | string | yes | Entry hash of the receipt being resolved. MUST reference a receipt earlier in the same session. |
 | `settlement.final_status` | string | yes | `"settled"` or `"failed"`. Never `"pending"` — a pending attachment is meaningless. Derived per §8.4. |
-| `settlement.tx_hash` | string \| null | yes | On-chain transaction hash if present in the settle response, else `null`. Derived per §8.4. |
+| `settlement.tx_hash` | string \| null | yes | On-chain transaction hash if present in the settle response, else `null`. Derived per §8.4. MUST be a non-empty string when `final_status` is `"settled"`. |
 | `settlement.network` | string \| null | yes | Network as claimed by the response when present, else issuer context. |
 | `settlement.facilitator_id` | string | yes | Identifier/URL of the facilitator consulted. Issuer-attested. |
 | `settlement.response_timestamp` | string | yes | RFC 3339 UTC time the response was received. Issuer-attested. |
@@ -176,20 +176,43 @@ evidence.
 
 ## 5. Canonical form
 
-Unchanged from v0.1. The canonical form of a JSON value is the UTF-8
-encoding of its JSON serialization with: object keys sorted lexicographically
-by Unicode code point; separators `,` and `:` with no whitespace; no escaping
-of non-ASCII characters; `null` values **included** (never omitted).
+The canonical form of a JSON value is its serialization per **RFC 8785
+(JCS)** — compact separators, object keys sorted by **UTF-16 code units**,
+JSON.stringify-style escaping, raw UTF-8 for non-ASCII, `null` values
+**included** (never omitted) — with two profile restrictions and one
+file-level rule on top:
+
+- **Floats are forbidden** anywhere in an entry (unchanged since v0.1).
+- **Integers MUST satisfy |n| ≤ 2^53 − 1**, so every conforming stack —
+  including double-backed JSON parsers — re-serializes them identically.
+- **Duplicate keys are non-conforming.** Canonicalization is defined over
+  the parsed value; a file whose parse must drop a duplicate key carries
+  bytes no check can see. Verifiers MUST parse entry files with duplicate
+  detection and fail on any duplicate.
+
+(For ASCII keys, UTF-16 code-unit order equals code-point order, so every
+previously published vector is byte-identical under this section. With the
+pre-action layer's `decision_ref` built on JCS and adjacent receipt formats
+canonicalizing via JCS, this is convergence, not divergence.)
 
 - **Signing payload** = canonical form of the entry **without** `signatures`.
 - **Entry hash** = SHA-256 of the canonical form of the **complete** entry
-  (including `signatures`). Used for `prev_entry_hash` chaining, for
-  `attaches_to` references, and for content-addressing stored entries.
+  (including `signatures`) — which is why the **full entry** MUST be
+  canonicalizable, not only the signed core. Used for `prev_entry_hash`
+  chaining, for `attaches_to` references, and for content-addressing.
 
 ## 6. Signatures
 
 The issuer MUST sign every entry: `sig = Ed25519.sign(sk, signing_payload)`.
-Additional co-signatures MAY be appended over the same payload. Co-signing
+Additional co-signatures MAY be appended over the same payload.
+
+Public keys MUST be canonical encodings of points **outside the small-order
+subgroup**: verifiers MUST reject the identity point and any point `P` with
+`8·P = identity` **before** evaluating the signature equation, and MUST
+check `key_id` consistency with `public_key` (§4.4). Without the
+small-order rule, an entry "signed" with no secret at all (identity key,
+zero scalar) satisfies the verification equation in mainstream libraries —
+the §9 false-assurance threat wearing the format's own uniform. Co-signing
 and algorithm agility (secp256k1, ERC-1271 contract signatures) remain on the
 v0.3 list (§11).
 
@@ -219,6 +242,15 @@ independently enumerable obligation set in which each covered interaction
 obligates exactly one receipt. The x402 profile has a natural candidate:
 settled payments are enumerable on-chain, and §4.3 binds each payment to its
 receipt. Naming this limit is what makes the no-rewriting claim strong.
+
+One further limit, stated rather than implied: chaining constrains a
+*presented* run, and cannot prevent **equivocation** — an issuer signing two
+different successors at the same `(session, seq)` with the same
+`prev_entry_hash`. Each branch verifies independently. What the format does
+give: two signed entries at the same position with different hashes are
+**jointly self-incriminating**, cryptographic proof of equivocation the
+moment both surface. Anchoring turns "detectable when surfaced" into
+"concealable never".
 
 Anchoring (Merkle root per epoch to a chain and/or RFC 3161) remains out of
 scope for v0.2 (§11).
@@ -266,8 +298,17 @@ Given an attachment `A` and a receipt `R`:
 9. For the x402 profile, the settle-response mapping is:
    - Parse the verbatim bytes as UTF-8 JSON. If parsing fails, **or the
      parsed value is not a JSON object** (a bare string, number, boolean,
-     null or array), the response is *non-conforming*: `final_status` MUST
-     be `"failed"`, `tx_hash` MUST be `null`.
+     null or array), **or the object contains duplicate keys** (last-wins
+     and first-wins parsers would otherwise derive opposite finality from
+     identical bytes; RFC 8785 §3.1 precedent), the response is
+     *non-conforming*: `final_status` MUST be `"failed"`, `tx_hash` MUST
+     be `null`.
+   - Verify-leg and settle-leg responses are **different evidence
+     classes**. A verify-shaped reply — e.g. `{"isValid": true}` with no
+     `transaction` — proves a payment was *verified*, never that it
+     *settled*, and MUST NOT be treated as settlement evidence. The mapping
+     already enforces this (`settled` requires `success` **and** a
+     transaction); this names the rule.
    - `final_status = "settled"` **iff** the parsed object has
      `success == true` **and** `transaction` is a non-empty string.
      Otherwise `final_status = "failed"`. (Note: a response claiming
@@ -305,6 +346,14 @@ only check that touches a ledger, and it is optional for format validity.
   an on-chain identity registry (ERC-8004-style), or pin contractually. Key
   rotation SHOULD start a new session.
 - **Timestamps** are issuer claims until anchored (§7).
+- **Prose is not a transport.** Copies of signed artifacts pasted into
+  comments, chats or docs are non-authoritative: rendering surfaces
+  silently normalize whitespace and truncate fields, producing false
+  "signature invalid" alarms indistinguishable from real signing bugs.
+  Bindings to external artifacts (e.g. `meta.authorization`) SHOULD carry
+  the exact content hash and a checksum-stable retrieval pointer (raw URL,
+  relay event, content-addressed store); inline copies are illustrative
+  only. Learned empirically: see `experiments/issue-4/REPORT.md`.
 - **Non-repudiation, not recomputability.** Content-free digests prove what
   was recorded and that it is unaltered; a verifier without the underlying
   bytes cannot re-derive the request or response from the receipt. A
@@ -396,6 +445,20 @@ dispatch.
 - Resolves reference-repo issues #1 and #2; design credit to the
   contributors in x402-foundation/x402#2922, grounded in the failure data of
   x402-foundation/x402#2814.
+- **Round 3** (second-implementation review — issues #6–#13, all fixes in
+  one release): §5 adopts RFC 8785 outright with the profile restrictions
+  (float ban, |int| ≤ 2^53−1) and makes duplicate keys non-conforming at
+  both layers (#7, #8); §6 adds small-order/identity-point rejection and
+  key_id consistency (#12); §7 names equivocation as an explicit limit
+  (#11); §8.4 names the verify/settle evidence-class boundary and derives
+  duplicate-key responses as non-conforming; the attachment leg gains the
+  settled⇒tx_hash guard (#9); the verifier enforces every schema Req and
+  never answers with a traceback (#6, #10); KEY.txt and every file
+  read/write pin UTF-8 (#13 — the same class resurfaced read-side during
+  the issue-4 close and is fixed repo-wide). The 31-entry hostile corpus
+  behind these findings lives at `test-vectors/hostile-corpus/`
+  (SHA256SUMS intact) as the permanent regression suite, credited to its
+  author. New vectors valid/10 and invalid/16–20 pin each class.
 - §7 rewritten to separate **no-rewriting** (which chaining provides) from
   **no-omission** (which chaining cannot provide in principle); no-omission
   mechanisms (issuance cadence, enumerable obligation sets) are scoped to
@@ -407,7 +470,9 @@ dispatch.
   facilitator responses (same thread). Evidence formats should be hardened
   by real failures, not happy-path examples.
 
-**Planned for v0.3:** provider/payer co-signatures; algorithm agility
+**Planned for v0.3:** first-class `authorization` field with transport
+discipline (`authorization_uri`, `authorization_sha256`, `transport_hint`;
+see issue #14); provider/payer co-signatures; algorithm agility
 (secp256k1, ERC-1271 contract signatures); Merkle anchoring profile;
 RFC 3161 timestamp attachment; salted-digest mode as default; x402 v2 wire
 profile (`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` headers, CAIP identifiers).

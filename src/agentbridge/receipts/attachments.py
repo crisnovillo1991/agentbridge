@@ -22,9 +22,16 @@ def derive_x402(raw: bytes) -> tuple[str, str | None, str | None]:
     claim with no transaction — derives as failed. The verbatim digest, not
     an optimistic status, carries the facilitator's claim.
     """
+    def _nodup(pairs):
+        d = {}
+        for k, v in pairs:
+            if k in d:
+                raise ValueError("duplicate key")
+            d[k] = v
+        return d
     try:
-        obj = json.loads(raw.decode("utf-8"))
-    except Exception:
+        obj = json.loads(raw.decode("utf-8"), object_pairs_hook=_nodup)
+    except Exception:  # unparseable OR duplicate keys: non-conforming (§8.4)
         return "failed", None, None
     if not isinstance(obj, dict):  # bare string/number/bool/null/array (§8.4)
         return "failed", None, None

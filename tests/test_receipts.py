@@ -130,3 +130,15 @@ def test_derive_x402_survives_hostile_inputs():
     assert derive_x402(b'{"success":"true","transaction":"0x1"}')[0] == "failed"  # bool estricto
     assert derive_x402(b'{"success":true,"transaction":""}')[0] == "failed"       # tx vacío no liquida
     assert derive_x402(b'{"success":true,"transaction":"0xok"}')[0:2] == ("settled", "0xok")
+    # ronda 3 (issue #7): duplicados no-conformes — mismos bytes, jamas dos veredictos
+    assert derive_x402(b'{"success":true,"transaction":"0xFIRST","transaction":""}')[0:2] == ("failed", None)
+    # vaaraio: una respuesta con forma de verify JAMAS cuenta como settlement
+    assert derive_x402(b'{"isValid": true}')[0:2] == ("failed", None)
+
+
+def test_canonical_integer_bound():
+    import pytest
+    from agentbridge.receipts.canonical import canonical_json
+    with pytest.raises(ValueError):
+        canonical_json({"body_len": 2**60})
+    assert canonical_json({"n": 2**53 - 1})
