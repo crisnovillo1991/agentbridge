@@ -51,6 +51,13 @@ def loads_strict(text: str):
 
 # ---------------- canonical form: RFC 8785 profile (§5) -----------------------
 def _check(obj):
+    if isinstance(obj, str):
+        try:
+            obj.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("string is not UTF-8 encodable (lone surrogate) — "
+                             "no canonical form exists (§5)")
+        return
     if isinstance(obj, float):
         raise ValueError("floats are forbidden by the spec (§5)")
     if isinstance(obj, bool):

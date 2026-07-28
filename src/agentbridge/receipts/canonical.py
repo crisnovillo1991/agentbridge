@@ -32,7 +32,14 @@ def _emit(v: Any) -> str:
 
 
 def _reject_invalid(obj: Any) -> None:
-    if isinstance(obj, bool) or obj is None or isinstance(obj, str):
+    if isinstance(obj, bool) or obj is None:
+        return
+    if isinstance(obj, str):
+        try:
+            obj.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("string is not UTF-8 encodable (lone surrogate); "
+                             "no canonical form exists (spec §5)")
         return
     if isinstance(obj, float):
         raise ValueError("floats are forbidden in receipts; use decimal strings")

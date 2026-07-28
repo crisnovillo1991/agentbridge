@@ -185,13 +185,21 @@ file-level rule on top:
 - **Floats are forbidden** anywhere in an entry (unchanged since v0.1).
 - **Integers MUST satisfy |n| ≤ 2^53 − 1**, so every conforming stack —
   including double-backed JSON parsers — re-serializes them identically.
+- **Every string MUST be UTF-8 encodable.** JSON parsers admit lone
+  surrogates that UTF-8 refuses; such an entry has **no canonical form and
+  no entry hash**, so verifiers MUST reject it — anywhere in the entry,
+  including outside the signed payload (issue #15: two conforming stacks
+  must never disagree on whether a content address exists).
 - **Duplicate keys are non-conforming.** Canonicalization is defined over
   the parsed value; a file whose parse must drop a duplicate key carries
   bytes no check can see. Verifiers MUST parse entry files with duplicate
   detection and fail on any duplicate.
 
-(For ASCII keys, UTF-16 code-unit order equals code-point order, so every
-previously published vector is byte-identical under this section. With the
+(UTF-16 code-unit order and code-point order agree across the **entire Basic
+Multilingual Plane** and diverge only above it — astral keys sort *before*
+BMP keys that compare higher by code point. Every previously published
+vector is ASCII and therefore byte-identical under this section; vector
+valid/11 pins the astral boundary. With the
 pre-action layer's `decision_ref` built on JCS and adjacent receipt formats
 canonicalizing via JCS, this is convergence, not divergence.)
 
@@ -325,8 +333,8 @@ Given an attachment `A` and a receipt `R`:
     non-terminal responses; `"failed"` covers terminal failures per the
     mapping.
 
-Steps 1–7 require no network access. Step 9's chain reconciliation is the
-only check that touches a ledger, and it is optional for format validity.
+Steps 1–7 require no network access. Rule 6's chain reconciliation (§8.3) is
+the only check that touches a ledger, and it is optional for format validity.
 
 ## 9. Security considerations
 
@@ -445,6 +453,12 @@ dispatch.
 - Resolves reference-repo issues #1 and #2; design credit to the
   contributors in x402-foundation/x402#2922, grounded in the failure data of
   x402-foundation/x402#2814.
+- **Round 3.1** (third independent run — issue #15): strings MUST be UTF-8
+  encodable anywhere in the entry (lone surrogates have no canonical form;
+  the silent-accept regression found by a 13,244-mutation structural fuzz is
+  fixed and pinned by invalid/22); the verify-leg-as-settlement rule gains
+  its vector (invalid/21); the §5 BMP boundary is stated precisely and
+  pinned by valid/11; §8.4's step numbering corrected.
 - **Round 3** (second-implementation review — issues #6–#13, all fixes in
   one release): §5 adopts RFC 8785 outright with the profile restrictions
   (float ban, |int| ≤ 2^53−1) and makes duplicate keys non-conforming at
@@ -458,7 +472,7 @@ dispatch.
   the issue-4 close and is fixed repo-wide). The 31-entry hostile corpus
   behind these findings lives at `test-vectors/hostile-corpus/`
   (SHA256SUMS intact) as the permanent regression suite, credited to its
-  author. New vectors valid/10 and invalid/16–20 pin each class.
+  author, SmartFlow Observatory (github.com/smartflowproai-lang). New vectors valid/10 and invalid/16–20 pin each class.
 - §7 rewritten to separate **no-rewriting** (which chaining provides) from
   **no-omission** (which chaining cannot provide in principle); no-omission
   mechanisms (issuance cadence, enumerable obligation sets) are scoped to
@@ -466,7 +480,7 @@ dispatch.
   precisions come from independent review in the ERC-8004 Ethereum
   Magicians thread.
 - §8.4 non-object-JSON clarification and vector valid/09 come from an
-  independent dry-run of the mapping against 610 archived production
+  independent dry-run by SmartFlow Observatory (github.com/smartflowproai-lang) of the mapping against 610 archived production
   facilitator responses (same thread). Evidence formats should be hardened
   by real failures, not happy-path examples.
 
@@ -478,3 +492,26 @@ RFC 3161 timestamp attachment; salted-digest mode as default; x402 v2 wire
 profile (`PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` headers, CAIP identifiers).
 
 [x402]: https://www.x402.org
+
+## Provenance of findings
+
+Every normative change in this document traces to a source, in the same
+spirit as every value in a receipt:
+
+- **SmartFlow Observatory** (github.com/smartflowproai-lang): the #2814
+  settlement failure data that shaped v0.2; three production dry-runs
+  against a 610-response facilitator archive; the independent second
+  implementation; the 31-entry hostile corpus behind issues #6–#13; the
+  lone-surrogate find (#15).
+- **invinoveritas** (github.com/babyblueviper1): the pre-action interop
+  experiment (issue #4), the three transport failures that produced §9's
+  "prose is not a transport" note, and the shipped `content_sha256`
+  precedent for `authorization_sha256`.
+- **pipavlo82** (github.com/pipavlo82/crystal-receipt): the
+  no-rewriting/no-omission correction (§7, issue #5) and the
+  obligation-record prior art scoped into v0.3.
+- **0xbrainkid**: the transport-discipline schema for the v0.3
+  `authorization` field (issue #14).
+- **vaaraio**: the verify-leg/settle-leg evidence-class distinction (§8.4).
+- **clai-mach** (ERC-8004 thread): the receipt-layer/reputation-layer
+  boundary that scopes §7's omission mechanisms as interfaces.

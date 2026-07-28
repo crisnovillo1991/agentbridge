@@ -142,3 +142,14 @@ def test_canonical_integer_bound():
     with pytest.raises(ValueError):
         canonical_json({"body_len": 2**60})
     assert canonical_json({"n": 2**53 - 1})
+
+
+def test_canonical_rejects_lone_surrogates_and_orders_astral_keys():
+    """Issue #15: no canonical form exists for a lone surrogate; astral keys
+    order by UTF-16 code units (surrogate pairs sort before U+FFFD)."""
+    import pytest
+    from agentbridge.receipts.canonical import canonical_json
+    with pytest.raises(ValueError):
+        canonical_json({"note": "\ud800"})
+    out = canonical_json({"\U0001F600": 1, "\uFFFD": 2}).decode()
+    assert out.index("\U0001F600") < out.index("\uFFFD")
