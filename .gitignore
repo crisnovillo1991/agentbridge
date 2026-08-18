@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 capabilities.yaml
 .pytest_cache/
+
+# Understand Anything (grafo local del plugin, no se commitea)
+.ua/
+.understand-anything/

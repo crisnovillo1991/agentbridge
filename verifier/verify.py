@@ -339,6 +339,21 @@ def verify_settle_disclosure(entry: dict, raw: bytes) -> list[str]:
                                                          or pay.get("settlement_ref") != d_tx):
             problems.append("re-derivation FAIL (§8.4): settled-at-issuance fields "
                             "do not re-derive from the disclosed response")
+        # §4.3 (draft-2): payer re-derivation — when the disclosed settle
+        # response carries a payer, the embedded payment.payer MUST match
+        # it (addresses compared lowercase). Evidence: shipped allowlist
+        # bug (KKallias); vector pair: issue #17 (SmartFlow).
+        try:
+            robj = loads_strict(raw.decode("utf-8"))
+        except Exception:
+            robj = None  # non-conforming bytes carry nothing (§8.4)
+        rp = robj.get("payer") if isinstance(robj, dict) else None
+        if isinstance(rp, str) and rp:
+            ep = pay.get("payer")
+            if not isinstance(ep, str) or ep.lower() != rp.lower():
+                problems.append(
+                    f"payer re-derivation mismatch (§4.3/§8.4): embedded "
+                    f"payment.payer {ep!r} != disclosed payer {rp!r}")
     return problems
 
 
