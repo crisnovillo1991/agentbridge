@@ -306,7 +306,27 @@ def derive_x402(raw: bytes) -> tuple[str, str | None, str | None]:
     return "failed", tx if isinstance(tx, str) and tx else None, net
 
 
-def verify_settle_disclosure(entry: dict, raw: bytes) -> list[str]:
+def _payer_rederivation(payment: dict, raw: bytes) -> list[str]:
+    """§4.3 (draft-2): when the disclosed settle response carries a payer,
+    the embedded payment.payer MUST match it (addresses compared lowercase).
+    Non-conforming bytes carry nothing (§8.4). Evidence: shipped allowlist
+    bug (KKallias); vector pair: issue #17 (SmartFlow)."""
+    try:
+        robj = loads_strict(raw.decode("utf-8"))
+    except Exception:
+        return []
+    rp = robj.get("payer") if isinstance(robj, dict) else None
+    if not (isinstance(rp, str) and rp):
+        return []
+    ep = payment.get("payer")
+    if not isinstance(ep, str) or ep.lower() != rp.lower():
+        return [f"payer re-derivation mismatch (§4.3/§8.4): embedded "
+                f"payment.payer {ep!r} != disclosed payer {rp!r}"]
+    return []
+
+
+def verify_settle_disclosure(entry: dict, raw: bytes,
+                             receipt: dict | None = None) -> list[str]:
     problems = []
     d_status, d_tx, d_net = derive_x402(raw)
     digest = hashlib.sha256(raw).hexdigest()
@@ -327,6 +347,11 @@ def verify_settle_disclosure(entry: dict, raw: bytes) -> list[str]:
                             f"{st.get('tx_hash')!r} != derived {d_tx!r}")
         if d_net and st.get("network") and st.get("network") != d_net:
             problems.append("FLAG (§8.4): attachment network differs from response network")
+        # §4.3 travels through attaches_to: the disclosure settles the
+        # receipt's payment, so the payer rule runs against the paired
+        # receipt whenever one is presented (pending-then-attachment flow).
+        if isinstance(receipt, dict) and isinstance(receipt.get("payment"), dict):
+            problems += _payer_rederivation(receipt["payment"], raw)
     else:
         pay = entry.get("payment")
         if not isinstance(pay, dict):
@@ -339,21 +364,7 @@ def verify_settle_disclosure(entry: dict, raw: bytes) -> list[str]:
                                                          or pay.get("settlement_ref") != d_tx):
             problems.append("re-derivation FAIL (§8.4): settled-at-issuance fields "
                             "do not re-derive from the disclosed response")
-        # §4.3 (draft-2): payer re-derivation — when the disclosed settle
-        # response carries a payer, the embedded payment.payer MUST match
-        # it (addresses compared lowercase). Evidence: shipped allowlist
-        # bug (KKallias); vector pair: issue #17 (SmartFlow).
-        try:
-            robj = loads_strict(raw.decode("utf-8"))
-        except Exception:
-            robj = None  # non-conforming bytes carry nothing (§8.4)
-        rp = robj.get("payer") if isinstance(robj, dict) else None
-        if isinstance(rp, str) and rp:
-            ep = pay.get("payer")
-            if not isinstance(ep, str) or ep.lower() != rp.lower():
-                problems.append(
-                    f"payer re-derivation mismatch (§4.3/§8.4): embedded "
-                    f"payment.payer {ep!r} != disclosed payer {rp!r}")
+        problems += _payer_rederivation(pay, raw)
     return problems
 
 
@@ -382,13 +393,16 @@ def main() -> int:
             problems += verify_chain(entry, loads_strict(args.prev.read_text(encoding="utf-8")))
         except Exception as e:
             problems.append(f"--prev unreadable: {e}")
+    receipt = None
     if args.receipt:
         try:
-            problems += verify_pair(entry, loads_strict(args.receipt.read_text(encoding="utf-8")))
+            receipt = loads_strict(args.receipt.read_text(encoding="utf-8"))
+            problems += verify_pair(entry, receipt)
         except Exception as e:
             problems.append(f"--receipt unreadable: {e}")
     if args.settle_response:
-        problems += verify_settle_disclosure(entry, args.settle_response.read_bytes())
+        problems += verify_settle_disclosure(entry, args.settle_response.read_bytes(),
+                                             receipt=receipt)
     if args.body:
         digest = hashlib.sha256(args.body.read_bytes()).hexdigest()
         resp = entry.get("response")
