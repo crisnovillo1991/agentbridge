@@ -68,6 +68,7 @@ def _check(obj):
         for k, v in obj.items():
             if not isinstance(k, str):
                 raise ValueError("object keys must be strings")
+            _check(k)  # keys are strings too: a lone surrogate in a key has no canonical form (§5)
             _check(v)
     elif isinstance(obj, list):
         for v in obj:
